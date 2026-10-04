@@ -200,7 +200,7 @@ class ProjectStorage {
 
   Future<void> _decodeIntoEngine(Uint8List bytes) async {
     final r = _Reader(bytes);
-    final magic = String.fromCharCodes(r.bytes(4));
+    final magic = String.fromCharCodes(r.readBytes(4));
     if (magic != 'PCT1') throw const FormatException('不是有效的 Pcitrue .bin 文件');
     r.u32();
     r.u32();
@@ -218,7 +218,7 @@ class ProjectStorage {
       final visible = r.byte() == 1;
       final len = r.u32();
       final layer = PainterLayer(name: name, opacity: opacity, visible: visible);
-      if (len > 0) layer.bitmap = await _decodeImage(r.bytes(len));
+      if (len > 0) layer.bitmap = await _decodeImage(r.readBytes(len));
       layers.add(layer);
     }
 
@@ -378,11 +378,11 @@ class _Reader {
 
   int byte() => bytes[off++];
 
-  Uint8List bytes(int n) {
+  Uint8List readBytes(int n) {
     final v = bytes.sublist(off, off + n);
     off += n;
     return v;
   }
 
-  String str() => utf8.decode(bytes(u32()));
+  String str() => utf8.decode(readBytes(u32()));
 }
