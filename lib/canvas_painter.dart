@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'paint_engine.dart';
 
-/// Renders the transformed canvas: checker backdrop, all layer bitmaps and
-/// the in-progress stroke preview.
+/// Renders the transformed canvas: backdrop, all layer bitmaps, live stroke.
 class CanvasPainter extends CustomPainter {
   CanvasPainter({required this.engine}) : super(repaint: engine);
 
@@ -11,20 +10,19 @@ class CanvasPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Backdrop outside the canvas.
     canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF222222));
 
     canvas.save();
     canvas.translate(engine.offset.dx, engine.offset.dy);
     canvas.scale(engine.scale);
 
-    // White paper.
+    // White paper
     canvas.drawRect(
       Rect.fromLTWH(0, 0, engine.canvasSize.width, engine.canvasSize.height),
       Paint()..color = Colors.white,
     );
 
-    // Layers bottom -> top.
+    // Layers bottom -> top
     for (var i = 0; i < engine.layers.length; i++) {
       final layer = engine.layers[i];
       if (!layer.visible) continue;
@@ -32,8 +30,6 @@ class CanvasPainter extends CustomPainter {
       if (bmp == null) continue;
 
       if (i == engine.activeLayerIndex && engine.stroking) {
-        // Active layer: draw committed bitmap, then live stroke (which may
-        // erase within an isolated buffer).
         canvas.saveLayer(
           Rect.fromLTWH(0, 0, engine.canvasSize.width, engine.canvasSize.height),
           Paint()..color = Colors.white.withOpacity(layer.opacity),
@@ -50,7 +46,7 @@ class CanvasPainter extends CustomPainter {
       }
     }
 
-    // Paper border.
+    // Paper border
     canvas.drawRect(
       Rect.fromLTWH(0, 0, engine.canvasSize.width, engine.canvasSize.height),
       Paint()
