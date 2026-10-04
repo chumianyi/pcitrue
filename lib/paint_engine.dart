@@ -112,7 +112,7 @@ extension BrushTypeX on BrushType {
 }
 
 /// Drawing tools: freehand, vector shapes, text.
-enum ToolMode { draw, line, rect, circle, text }
+enum Tool { draw, line, rect, ellipse, text }
 
 /// A single painting layer holding a committed offscreen bitmap.
 class PainterLayer {
@@ -225,7 +225,7 @@ class PaintEngine extends ChangeNotifier {
   bool layersEnabled = true;
   String glVersion = 'unknown';
 
-  ToolMode tool = ToolMode.draw;
+  Tool tool = Tool.draw;
   BrushType brush = BrushType.pen;
   Color color = const Color(0xFF1A73E8);
   double brushSize = 14.0;
@@ -234,8 +234,10 @@ class PaintEngine extends ChangeNotifier {
   // ---- Text ----
   final List<TextItem> textItems = [];
   TextItem? selectedText;
-  String? _pendingText;
-  double _pendingTextSize = 32;
+
+  /// Called when the user taps empty canvas while in text tool mode; the UI
+  /// shows a dialog and then calls [addTextItem].
+  void Function(Offset canvasPoint)? onTextTap;
 
   // ---- Transform ----
   double _scale = 1.0;
@@ -298,7 +300,7 @@ class PaintEngine extends ChangeNotifier {
 
     final p = screenToCanvas(details.localFocalPoint);
 
-    if (tool == ToolMode.text) {
+    if (tool == Tool.text) {
       final hit = hitTestText(p);
       if (hit != null) {
         _mode = _GestureMode.textDrag;
@@ -312,7 +314,7 @@ class PaintEngine extends ChangeNotifier {
       return;
     }
 
-    if (tool == ToolMode.line || tool == ToolMode.rect || tool == ToolMode.circle) {
+    if (tool == Tool.line || tool == Tool.rect || tool == Tool.ellipse) {
       _mode = _GestureMode.shape;
       _shapeStart = p;
       _shapeCurrent = p;
@@ -370,29 +372,22 @@ class PaintEngine extends ChangeNotifier {
       _commitShape();
     } else if (_mode == _GestureMode.textDrag) {
       scheduleMicrotask(() => onProjectChanged?.call());
-    } else if (_mode == _GestureMode.none && tool == ToolMode.text && _textDownStart != null) {
+    } else if (_mode == _GestureMode.none && tool == Tool.text && _textDownStart != null) {
       final p = _textDownStart!;
       _textDownStart = null;
-      _placePendingText(p);
+      onTextTap?.call(p);
     }
     _mode = _GestureMode.none;
   }
 
-  void _placePendingText(Offset p) {
-    if (_pendingText != null && _pendingText!.trim().isNotEmpty) {
-      final t = TextItem(
-        text: _pendingText!,
-        pos: p,
-        size: _pendingTextSize,
-        color: color,
-      );
-      textItems.add(t);
-      selectedText = t;
-      steps.add(PaintingStep.text(t.clone()));
-      if (steps.length > _maxSteps) steps.removeAt(0);
-      notifyListeners();
-      scheduleMicrotask(() => onProjectChanged?.call());
-    }
+  /// Add a text object (from the UI dialog).
+  void addTextItem(TextItem item) {
+    textItems.add(item);
+    selectedText = item;
+    steps.add(PaintingStep.text(item.clone()));
+    if (steps.length > _maxSteps) steps.removeAt(0);
+    notifyListeners();
+    scheduleMicrotask(() => onProjectChanged?.call());
   }
 
   // ---------------------------------------------------------------------
@@ -467,15 +462,15 @@ class PaintEngine extends ChangeNotifier {
 
     String shapeName;
     switch (tool) {
-      case ToolMode.line:
+      case Tool.line:
         canvas.drawLine(a, b, paint);
         shapeName = 'line';
         break;
-      case ToolMode.rect:
+      case Tool.rect:
         canvas.drawRect(rect, paint);
         shapeName = 'rect';
         break;
-      case ToolMode.circle:
+      case Tool.ellipse:
         canvas.drawOval(rect, paint);
         shapeName = 'circle';
         break;
@@ -695,13 +690,13 @@ class PaintEngine extends ChangeNotifier {
       ..isAntiAlias = true
       ..style = shapeFilled ? PaintingStyle.fill : PaintingStyle.stroke;
     switch (tool) {
-      case ToolMode.line:
+      case Tool.line:
         canvas.drawLine(a, b, paint);
         break;
-      case ToolMode.rect:
+      case Tool.rect:
         canvas.drawRect(rect, paint);
         break;
-      case ToolMode.circle:
+      case Tool.ellipse:
         canvas.drawOval(rect, paint);
         break;
       default:
@@ -761,7 +756,7 @@ class PaintEngine extends ChangeNotifier {
 
   /// Clear to blank and put the decoded image as the single bottom base layer.
   Future<void> importImageAsBase(ui.Image image) async {
-    clearProject();
+    clearToBlank();
     await addImageAsLayer(image);
   }
 
@@ -814,7 +809,7 @@ class PaintEngine extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------------
-  void setTool(ToolMode t) {
+  void setTool(Tool t) {
     tool = t;
     selectedText = null;
     notifyListeners();
@@ -822,14 +817,7 @@ class PaintEngine extends ChangeNotifier {
 
   void setBrush(BrushType b) {
     brush = b;
-    tool = ToolMode.draw;
-    notifyListeners();
-  }
-
-  void setPendingText(String text, {double size = 32}) {
-    _pendingText = text;
-    _pendingTextSize = size;
-    tool = ToolMode.text;
+    tool = Tool.draw;
     notifyListeners();
   }
 
@@ -859,7 +847,7 @@ class PaintEngine extends ChangeNotifier {
   VoidCallback? onProjectChanged;
 
   /// Reset to a blank project (used after loading / clearing).
-  void clearProject() {
+  void clearToBlank() {
     for (final l in layers) {
       l.bitmap?.dispose();
     }

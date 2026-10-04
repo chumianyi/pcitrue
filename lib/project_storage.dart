@@ -14,17 +14,14 @@ import 'paint_engine.dart';
 /// Metadata for a saved project shown in the home gallery.
 class ProjectMeta {
   ProjectMeta({
-    required this.fileName,
-    required this.displayName,
-    required this.modified,
-    this.thumbnail,
+    required this.id,
+    required this.name,
+    required this.modifiedAt,
   });
 
-  /// Project id (also the .bin file name stem).
-  final String fileName;
-  String displayName;
-  DateTime modified;
-  ui.Image? thumbnail;
+  final String id;
+  String name;
+  DateTime modifiedAt;
 }
 
 /// Multi-project .bin persistence + public Pictures export.
@@ -51,26 +48,16 @@ class ProjectStorage {
     final f = File(p.join(root.path, _indexName));
     if (!await f.exists()) return [];
     final list = jsonDecode(await f.readAsString()) as List<dynamic>;
-    final metas = <ProjectMeta>[];
-    for (final e in list) {
-      final m = e as Map<String, dynamic>;
-      final id = m['id'] as String;
-      final meta = ProjectMeta(
-        fileName: id,
-        displayName: m['name'] as String? ?? '未命名',
-        modified:
-            DateTime.tryParse(m['modified'] as String? ?? '') ?? DateTime.now(),
-      );
-      // Load thumbnail.
-      final thumbFile = File(p.join(root.path, '$id.png'));
-      if (await thumbFile.exists()) {
-        try {
-          meta.thumbnail = await _decodeImage(await thumbFile.readAsBytes());
-        } catch (_) {}
-      }
-      metas.add(meta);
-    }
-    metas.sort((a, b) => b.modified.compareTo(a.modified));
+    final metas = list
+        .map((e) => ProjectMeta(
+              id: e['id'] as String,
+              name: e['name'] as String? ?? '未命名',
+              modifiedAt:
+                  DateTime.tryParse(e['modifiedAt'] as String? ?? '') ??
+                      DateTime.now(),
+            ))
+        .toList();
+    metas.sort((a, b) => b.modifiedAt.compareTo(a.modifiedAt));
     return metas;
   }
 
@@ -80,26 +67,48 @@ class ProjectStorage {
     await f.writeAsString(
       jsonEncode(metas
           .map((m) => {
-                'id': m.fileName,
-                'name': m.displayName,
-                'modified': m.modified.toIso8601String(),
+                'id': m.id,
+                'name': m.name,
+                'modifiedAt': m.modifiedAt.toIso8601String(),
               })
           .toList()),
       flush: true,
     );
   }
 
-  /// Load a project into the engine.
-  Future<void> loadProjectFromBin(String id) async {
+  /// Create a brand-new blank project id (engine already blank).
+  Future<ProjectMeta> createProject({String? name}) async {
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    _projectId = id;
+    final now = DateTime.now();
+    final meta = ProjectMeta(
+      id: id,
+      name: name ?? '画作 ${now.month}/${now.day}',
+      modifiedAt: now,
+    );
+    final metas = await listProjects();
+    metas.add(meta);
+    await _writeIndex(metas);
+    await autosave();
+    return meta;
+  }
+
+  /// Load an existing project into the engine.
+  Future<void> openProject(String id) async {
     _projectId = id;
     final root = await _rootDir();
     final bin = File(p.join(root.path, '$id.bin'));
     if (!await bin.exists()) return;
-    final bytes = await bin.readAsBytes();
-    await _decodeIntoEngine(bytes);
+    await _decodeIntoEngine(await bin.readAsBytes());
   }
 
-  /// Delete a project and its files.
+  Future<Uint8List?> thumbBytes(String id) async {
+    final root = await _rootDir();
+    final f = File(p.join(root.path, '$id.png'));
+    if (await f.exists()) return f.readAsBytes();
+    return null;
+  }
+
   Future<void> deleteProject(String id) async {
     final root = await _rootDir();
     for (final ext in ['bin', 'png']) {
@@ -107,19 +116,22 @@ class ProjectStorage {
       if (await f.exists()) await f.delete();
     }
     final metas = await listProjects();
-    metas.removeWhere((m) => m.fileName == id);
+    metas.removeWhere((m) => m.id == id);
     await _writeIndex(metas);
   }
 
-  /// Autosave (debounced by caller). Creates a project entry on first save.
-  Future<void> autoSave() async {
+  /// Decode an imported raster image into a single bottom base layer.
+  Future<void> importRasterAsProject(Uint8List bytes) async {
+    final codec = await ui.instantiateImageCodec(bytes);
+    final frame = await codec.getNextFrame();
+    await engine.importImageAsBase(frame.image);
+  }
+
+  /// Autosave (debounced by caller). Creates entry on first save.
+  Future<void> autosave() async {
     var id = _projectId;
-    List<ProjectMeta> metas = [];
-    if (id != null) {
-      metas = await listProjects();
-      if (!metas.any((m) => m.fileName == id)) id = null;
-    }
-    if (id == null) {
+    var metas = await listProjects();
+    if (id == null || !metas.any((m) => m.id == id)) {
       id = DateTime.now().microsecondsSinceEpoch.toString();
       _projectId = id;
     }
@@ -134,19 +146,16 @@ class ProjectStorage {
     }
 
     metas = await listProjects();
-    final i = metas.indexWhere((m) => m.fileName == id);
+    final i = metas.indexWhere((m) => m.id == id);
     final now = DateTime.now();
     if (i >= 0) {
-      metas[i].modified = now;
+      metas[i].modifiedAt = now;
     } else {
-      metas.add(ProjectMeta(
-          fileName: id, displayName: '画作 ${now.month}/${now.day}', modified: now));
+      metas.add(ProjectMeta(id: id, name: '画作 ${now.month}/${now.day}', modifiedAt: now));
     }
     await _writeIndex(metas);
   }
 
-  // ---------------------------------------------------------------------
-  // .bin codec
   // ---------------------------------------------------------------------
   Future<Uint8List> _encodeEngine() async {
     final out = BytesBuilder();
@@ -193,9 +202,9 @@ class ProjectStorage {
     final r = _Reader(bytes);
     final magic = String.fromCharCodes(r.bytes(4));
     if (magic != 'PCT1') throw const FormatException('不是有效的 Pcitrue .bin 文件');
-    r.u32(); // version
-    r.u32(); // width
-    r.u32(); // height
+    r.u32();
+    r.u32();
+    r.u32();
     final active = r.u32();
     final brushName = r.str();
     final colorValue = r.u32();
@@ -208,8 +217,7 @@ class ProjectStorage {
       final opacity = r.f32();
       final visible = r.byte() == 1;
       final len = r.u32();
-      final layer =
-          PainterLayer(name: name, opacity: opacity, visible: visible);
+      final layer = PainterLayer(name: name, opacity: opacity, visible: visible);
       if (len > 0) layer.bitmap = await _decodeImage(r.bytes(len));
       layers.add(layer);
     }
@@ -280,8 +288,6 @@ class ProjectStorage {
   }
 
   // ---------------------------------------------------------------------
-  // Public export -> Pictures/Pcitrue
-  // ---------------------------------------------------------------------
   String _stamp(String ext) {
     final n = DateTime.now();
     String two(int v) => v.toString().padLeft(2, '0');
@@ -289,14 +295,16 @@ class ProjectStorage {
         '${two(n.hour)}${two(n.minute)}${two(n.second)}.$ext';
   }
 
-  Future<String> exportToPublic({required bool asJpg}) async {
+  Future<String> exportPng() async {
     final full = await _compositeFull();
-    if (!asJpg) {
-      final bd = await full.toByteData(format: ui.ImageByteFormat.png);
-      final bytes = bd!.buffer.asUint8List();
-      full.dispose();
-      return _save(_stamp('png'), 'image/png', bytes);
-    }
+    final bd = await full.toByteData(format: ui.ImageByteFormat.png);
+    final bytes = bd!.buffer.asUint8List();
+    full.dispose();
+    return _save(_stamp('png'), 'image/png', bytes);
+  }
+
+  Future<String> exportJpg() async {
+    final full = await _compositeFull();
     final raw = await full.toByteData(format: ui.ImageByteFormat.rawRgba);
     final dartImg = img.Image.fromBytes(
       width: full.width,
@@ -309,7 +317,7 @@ class ProjectStorage {
     return _save(_stamp('jpg'), 'image/jpeg', jpg);
   }
 
-  Future<String> exportBinToPublic() async {
+  Future<String> exportBin() async {
     final bytes = await _encodeEngine();
     return _save(_stamp('bin'), 'application/octet-stream', bytes);
   }
