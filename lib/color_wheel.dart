@@ -2,19 +2,27 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-/// A circular HSV color wheel picker with accurate HSV↔RGB conversion.
-/// Hue comes from the angle, saturation from the distance from center,
-/// brightness from the slider below.
+/// A circular HSV color wheel picker with a brightness slider.
+///
+/// Hue 0 sits at the top and increases clockwise. Drag position and the
+/// selection marker are mapped to/from HSV using the standard conversion,
+/// and the brightness slider is kept in sync.
 class ColorWheelPicker extends StatefulWidget {
-  const ColorWheelPicker({super.key, required this.initialColor, this.onChanged});
+  const ColorWheelPicker({
+    super.key,
+    required this.initialColor,
+    required this.onChanged,
+  });
+
   final Color initialColor;
-  final ValueChanged<Color>? onChanged;
+  final ValueChanged<Color> onChanged;
 
   @override
   State<ColorWheelPicker> createState() => _ColorWheelPickerState();
 }
 
 class _ColorWheelPickerState extends State<ColorWheelPicker> {
+  static const double _size = 280.0;
   late HSVColor _hsv;
 
   @override
@@ -23,23 +31,17 @@ class _ColorWheelPickerState extends State<ColorWheelPicker> {
     _hsv = HSVColor.fromColor(widget.initialColor);
   }
 
-  void _emit() {
-    widget.onChanged?.call(_hsv.toColor());
-  }
+  void _emit() => widget.onChanged(_hsv.toColor());
 
-  void _handleWheelDrag(Offset local, Size size) {
-    final center = size.center(Offset.zero);
-    final r = size.width / 2;
-    final d = local - center;
+  void _handleWheelDrag(Offset local) {
+    final center = _size / 2;
+    final r = _size / 2;
+    final d = local - Offset(center, center);
     final dist = d.distance.clamp(0.0, r);
-    // Angle: 0° = right (east), counterclockwise positive in atan2,
-    // but HSV hue starts at red=0° going clockwise.
-    var angle = math.atan2(d.dy, d.dx) * 180 / math.pi;
-    angle = (angle + 360) % 360;
-    // Flutter's HSVColor uses hue 0-360 where 0=red, going clockwise.
-    // atan2 gives 0=east(red), 90=south. In Flutter color wheel,
-    // we want red at top (like a standard color wheel).
-    final hue = (angle + 90) % 360;
+    // Standard atan2 gives angle from +X axis, clockwise positive (y down).
+    // Hue 0 is at the top, so add 90 degrees.
+    final rawDeg = math.atan2(d.dy, d.dx) * 180 / math.pi;
+    final hue = (rawDeg + 90 + 360) % 360;
     setState(() {
       _hsv = _hsv.withHue(hue).withSaturation(dist / r);
     });
@@ -52,18 +54,19 @@ class _ColorWheelPickerState extends State<ColorWheelPicker> {
       mainAxisSize: MainAxisSize.min,
       children: [
         GestureDetector(
-          onTapDown: (e) => _handleWheelDrag(e.localPosition, const Size(280, 280)),
-          onPanUpdate: (e) => _handleWheelDrag(e.localPosition, const Size(280, 280)),
+          onTapDown: (e) => _handleWheelDrag(e.localPosition),
+          onPanStart: (e) => _handleWheelDrag(e.localPosition),
+          onPanUpdate: (e) => _handleWheelDrag(e.localPosition),
           child: SizedBox(
-            width: 280,
-            height: 280,
+            width: _size,
+            height: _size,
             child: CustomPaint(painter: _WheelPainter(_hsv)),
           ),
         ),
         const SizedBox(height: 16),
         Row(
           children: [
-            const Icon(Icons.brightness_6, size: 20),
+            const Icon(Icons.light_mode, size: 20),
             Expanded(
               child: Slider(
                 min: 0,
@@ -108,54 +111,41 @@ class _WheelPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final center = size.center(Offset.zero);
+    final center = Offset(size.width / 2, size.height / 2);
     final r = size.width / 2;
 
-    // Draw the wheel as concentric rings with proper hue+saturation.
-    // For each angular sector, draw a filled arc from inner (white, S=0)
-    // to outer (pure hue, S=1). We approximate with thin ring segments.
-    const segments = 72; // 5° each
-    const rings = 20;
-
-    for (int ring = 1; ring <= rings; ring++) {
-      final s = ring / rings; // saturation 0..1
-      final innerR = r * (ring - 1) / rings;
-      final outerR = r * ring / rings;
-      for (int i = 0; i < segments; i++) {
-        final hue = i * (360 / segments);
-        final c = HSVColor.fromAHSV(1, hue.toDouble(), s, hsv.value).toColor();
-        final rect = Rect.fromCircle(center: center, radius: outerR);
-        // Start angle: -90° (top = red), going clockwise
-        final startAngle = -math.pi / 2 + (i * 2 * math.pi / segments);
-        final sweepAngle = 2 * math.pi / segments + 0.01;
-        canvas.drawArc(
-          rect,
-          startAngle,
-          sweepAngle,
-          true,
-          Paint()..color = c,
-        );
-        // Cover inner hole of this ring segment
-        if (innerR > 0) {
-          canvas.drawArc(
-            Rect.fromCircle(center: center, radius: innerR),
-            startAngle,
-            sweepAngle,
-            true,
-            Paint()..color = Colors.white, // will be overwritten by inner ring
-          );
-        }
-      }
+    // Hue ring: 360 thin arcs, hue 0 at top, clockwise.
+    const bands = 360;
+    const bandAngle = 2 * math.pi / bands;
+    for (int i = 0; i < bands; i++) {
+      final c = HSVColor.fromAHSV(1, i.toDouble(), 1, hsv.value).toColor();
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: r),
+        -math.pi / 2 + i * bandAngle,
+        bandAngle + 0.002,
+        true,
+        Paint()..color = c,
+      );
     }
 
-    // Selection indicator
-    final angle = (hsv.hue - 90) * math.pi / 180; // convert back
+    // Saturation mask: center is fully desaturated (the gray at current value),
+    // fading to fully saturated at the rim.
+    final centerGray = HSVColor.fromAHSV(1, hsv.hue, 0, hsv.value).toColor();
+    final maskPaint = Paint()
+      ..shader = RadialGradient(
+        colors: [centerGray, centerGray.withOpacity(0)],
+        stops: const [0.0, 1.0],
+      ).createShader(Rect.fromCircle(center: center, radius: r));
+    canvas.drawCircle(center, r, maskPaint);
+
+    // Selection marker: hue measured clockwise from the top.
+    final a = (hsv.hue - 90) * math.pi / 180;
     final selDist = hsv.saturation * r;
-    final selPos = center + Offset(math.cos(angle), math.sin(angle)) * selDist;
-    canvas.drawCircle(selPos, 12, Paint()..color = Colors.white);
+    final selPos = center + Offset(math.cos(a), math.sin(a)) * selDist;
+    canvas.drawCircle(selPos, 11, Paint()..color = Colors.white);
     canvas.drawCircle(
       selPos,
-      12,
+      11,
       Paint()
         ..color = hsv.toColor()
         ..style = PaintingStyle.stroke
@@ -164,5 +154,6 @@ class _WheelPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _WheelPainter oldDelegate) => oldDelegate.hsv != hsv;
+  bool shouldRepaint(covariant _WheelPainter oldDelegate) =>
+      oldDelegate.hsv != hsv;
 }

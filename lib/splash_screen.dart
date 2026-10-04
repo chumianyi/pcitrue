@@ -1,7 +1,8 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 
-/// Animated splash screen showing Pcitrue logo, then transitions to home.
+/// Animated Pcitrue logo splash that fades into the home gallery.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key, required this.onDone});
   final VoidCallback onDone;
@@ -12,75 +13,72 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  late final Animation<double> _fade;
-  late final Animation<double> _scale;
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1600),
+  )..forward();
 
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1800),
-    );
-    _fade = CurvedAnimation(parent: _ctrl, curve: Curves.easeIn);
-    _scale = Tween(begin: 0.5, end: 1.0).animate(
-      CurvedAnimation(parent: _ctrl, curve: Curves.elasticOut),
-    );
-    _ctrl.forward();
-    Timer(const Duration(milliseconds: 2200), widget.onDone);
+    Timer(const Duration(milliseconds: 1900), widget.onDone);
   }
 
   @override
   void dispose() {
-    _ctrl.dispose();
+    _c.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.surface,
+      backgroundColor: scheme.surface,
       body: Center(
         child: FadeTransition(
-          opacity: _fade,
+          opacity: CurvedAnimation(parent: _c, curve: Curves.easeIn),
           child: ScaleTransition(
-            scale: _scale,
+            scale: Tween(begin: 0.6, end: 1.0).animate(
+              CurvedAnimation(parent: _c, curve: Curves.elasticOut),
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 100,
-                  height: 100,
+                  width: 110,
+                  height: 110,
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      colors: [
-                        Theme.of(context).colorScheme.primary,
-                        Theme.of(context).colorScheme.tertiary,
-                      ],
+                      colors: [scheme.primary, scheme.tertiary],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
-                    borderRadius: BorderRadius.circular(24),
+                    borderRadius: BorderRadius.circular(28),
                     boxShadow: [
                       BoxShadow(
-                        color: Theme.of(context).colorScheme.primary.withOpacity(0.4),
-                        blurRadius: 20,
-                        spreadRadius: 5,
+                        color: scheme.primary.withOpacity(0.4),
+                        blurRadius: 24,
+                        offset: const Offset(0, 8),
                       ),
                     ],
                   ),
-                  child: const Icon(Icons.brush, size: 56, color: Colors.white),
+                  child: const Icon(Icons.brush, size: 60, color: Colors.white),
                 ),
-                const SizedBox(height: 24),
-                const Text(
-                  'Pcitrue',
-                  style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, letterSpacing: 2),
-                ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 20),
                 Text(
-                  'Professional Painting Studio',
-                  style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                  'Pcitrue',
+                  style: TextStyle(
+                    fontSize: 30,
+                    fontWeight: FontWeight.bold,
+                    color: scheme.onSurface,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '随手画出灵感',
+                  style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
                 ),
               ],
             ),

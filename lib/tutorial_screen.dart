@@ -30,7 +30,7 @@ class TutorialScreen extends StatelessWidget {
             '• 双指拖动 = 平移画布',
             '• 双击 = 适应屏幕',
           ]),
-          _section(context, '矢量工具', Icons.shapes, [
+          _section(context, '矢量工具', Icons.straighten, [
             '• 工具栏切换直线/矩形/圆/椭圆',
             '• 按住拖动画出形状，松手确认',
           ]),

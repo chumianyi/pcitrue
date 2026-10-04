@@ -17,9 +17,9 @@ class HomeGallery extends StatefulWidget {
 }
 
 class _HomeGalleryState extends State<HomeGallery> {
-  final ProjectStorage _storage = ProjectStorage(PaintEngine());
   List<ProjectMeta> _projects = [];
   bool _loading = true;
+  final Map<String, ui.Image?> _thumbs = {};
 
   @override
   void initState() {
@@ -29,9 +29,22 @@ class _HomeGalleryState extends State<HomeGallery> {
 
   Future<void> _refresh() async {
     setState(() => _loading = true);
-    final projects = await _storage.listProjects();
+    final storage = ProjectStorage(PaintEngine());
+    final projects = await storage.listProjects();
+    final thumbs = <String, ui.Image?>{};
+    for (final p in projects) {
+      final tb = await storage.thumbBytes(p.id);
+      if (tb != null) {
+        final codec = await ui.instantiateImageCodec(tb);
+        final frame = await codec.getNextFrame();
+        thumbs[p.id] = frame.image;
+      } else {
+        thumbs[p.id] = null;
+      }
+    }
     setState(() {
       _projects = projects;
+      _thumbs..clear()..addAll(thumbs);
       _loading = false;
     });
   }
@@ -39,6 +52,8 @@ class _HomeGalleryState extends State<HomeGallery> {
   Future<void> _newPainting() async {
     final engine = PaintEngine();
     final storage = ProjectStorage(engine);
+    await storage.createProject();
+    if (!mounted) return;
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => EditorScreen(engine: engine, storage: storage)),
@@ -50,7 +65,7 @@ class _HomeGalleryState extends State<HomeGallery> {
     final engine = PaintEngine();
     final storage = ProjectStorage(engine);
     try {
-      await storage.loadProjectFromBin(meta.fileName);
+      await storage.openProject(meta.id);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('打开失败: $e')));
@@ -70,12 +85,11 @@ class _HomeGalleryState extends State<HomeGallery> {
     final XFile? picked = await picker.pickImage(source: ImageSource.gallery);
     if (picked == null) return;
     final bytes = await picked.readAsBytes();
-    final codec = await ui.instantiateImageCodec(bytes);
-    final frame = await codec.getNextFrame();
 
     final engine = PaintEngine();
-    await engine.importImageAsBase(frame.image);
     final storage = ProjectStorage(engine);
+    await storage.importRasterAsProject(bytes);
+    await storage.createProject(name: '导入画');
     if (!mounted) return;
     await Navigator.push(
       context,
@@ -96,7 +110,7 @@ class _HomeGalleryState extends State<HomeGallery> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('删除画作'),
-        content: Text('确定要删除「${meta.displayName}」吗？此操作不可撤销。'),
+        content: Text('确定要删除「${meta.name}」吗？此操作不可撤销。'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
           TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('删除')),
@@ -104,7 +118,8 @@ class _HomeGalleryState extends State<HomeGallery> {
       ),
     );
     if (ok == true) {
-      await _storage.deleteProject(meta.fileName);
+      final storage = ProjectStorage(PaintEngine());
+      await storage.deleteProject(meta.id);
       _refresh();
     }
   }
@@ -182,6 +197,7 @@ class _HomeGalleryState extends State<HomeGallery> {
   }
 
   Widget _buildProjectCard(ProjectMeta meta) {
+    final thumb = _thumbs[meta.id];
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -189,8 +205,8 @@ class _HomeGalleryState extends State<HomeGallery> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            meta.thumbnail != null
-                ? RawImage(image: meta.thumbnail!, fit: BoxFit.cover)
+            thumb != null
+                ? RawImage(image: thumb, fit: BoxFit.cover)
                 : Container(color: Colors.grey.shade200),
             Positioned(
               bottom: 0,
@@ -210,13 +226,13 @@ class _HomeGalleryState extends State<HomeGallery> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      meta.displayName,
+                      meta.name,
                       style: const TextStyle(color: Colors.white, fontSize: 12),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     Text(
-                      '${meta.modified.month}/${meta.modified.day} ${meta.modified.hour}:${meta.modified.minute.toString().padLeft(2, '0')}',
+                      '${meta.modifiedAt.month}/${meta.modifiedAt.day} ${meta.modifiedAt.hour}:${meta.modifiedAt.minute.toString().padLeft(2, '0')}',
                       style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 10),
                     ),
                   ],

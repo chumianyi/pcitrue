@@ -1,8 +1,6 @@
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 import 'canvas_painter.dart';
 import 'color_wheel.dart';
@@ -31,7 +29,7 @@ class _EditorScreenState extends State<EditorScreen> {
     _engine = widget.engine;
     _storage = widget.storage;
     _engine.onProjectChanged = _debouncedSave;
-    _requestPermissions();
+    _engine.onTextTap = _placeText;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final box = context.findRenderObject() as RenderBox?;
@@ -39,16 +37,27 @@ class _EditorScreenState extends State<EditorScreen> {
     });
   }
 
-  Future<void> _requestPermissions() async {
-    await Permission.storage.request();
-    await Permission.photos.request();
-  }
+  String? _pendingText;
+  double _pendingTextSize = 32;
+  Color _pendingTextColor = const Color(0xFF1A73E8);
 
   void _debouncedSave() {
     final now = DateTime.now();
     if (_lastSave != null && now.difference(_lastSave!).inMilliseconds < 800) return;
     _lastSave = now;
-    _storage.autoSave();
+    _storage.autosave();
+  }
+
+  void _placeText(Offset canvasPoint) {
+    if (_pendingText == null || _pendingText!.isEmpty) return;
+    _engine.addTextItem(TextItem(
+      text: _pendingText!,
+      pos: canvasPoint,
+      size: _pendingTextSize,
+      color: _pendingTextColor,
+    ));
+    _pendingText = null;
+    _toast('文字已放置');
   }
 
   @override
@@ -66,11 +75,13 @@ class _EditorScreenState extends State<EditorScreen> {
         actions: [
           ListenableBuilder(
             listenable: _engine,
-            builder: (context, _) => IconButton(
-              tooltip: '撤销',
-              icon: const Icon(Icons.undo),
-              onPressed: _engine.canUndo ? _engine.undo : null,
+            builder: (context, _) => GestureDetector(
               onLongPress: _openStepTimeline,
+              child: IconButton(
+                tooltip: '撤销 (长按查看步骤)',
+                icon: const Icon(Icons.undo),
+                onPressed: _engine.canUndo ? _engine.undo : null,
+              ),
             ),
           ),
           ListenableBuilder(
@@ -146,36 +157,34 @@ class _EditorScreenState extends State<EditorScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Tool row: color + tools
             SizedBox(
               height: 48,
               child: Row(
                 children: [
                   _colorButton(),
-                  // Vector tools
                   IconButton(
-                    isSelected: _engine.tool == ToolMode.line,
-                    icon: const Icon(Icons.show_chart),
-                    selectedIcon: Icon(Icons.show_chart, color: scheme.primary),
+                    isSelected: _engine.tool == Tool.line,
+                    icon: const Icon(Icons.straighten),
+                    selectedIcon: Icon(Icons.straighten, color: scheme.primary),
                     tooltip: '直线',
-                    onPressed: () => _engine.setTool(ToolMode.line),
+                    onPressed: () => _engine.setTool(Tool.line),
                   ),
                   IconButton(
-                    isSelected: _engine.tool == ToolMode.rect,
+                    isSelected: _engine.tool == Tool.rect,
                     icon: const Icon(Icons.crop_square),
                     selectedIcon: Icon(Icons.crop_square, color: scheme.primary),
                     tooltip: '矩形',
-                    onPressed: () => _engine.setTool(ToolMode.rect),
+                    onPressed: () => _engine.setTool(Tool.rect),
                   ),
                   IconButton(
-                    isSelected: _engine.tool == ToolMode.circle,
+                    isSelected: _engine.tool == Tool.ellipse,
                     icon: const Icon(Icons.circle_outlined),
                     selectedIcon: Icon(Icons.circle_outlined, color: scheme.primary),
-                    tooltip: '圆形',
-                    onPressed: () => _engine.setTool(ToolMode.circle),
+                    tooltip: '椭圆',
+                    onPressed: () => _engine.setTool(Tool.ellipse),
                   ),
                   IconButton(
-                    isSelected: _engine.tool == ToolMode.text,
+                    isSelected: _engine.tool == Tool.text,
                     icon: const Icon(Icons.text_fields),
                     selectedIcon: Icon(Icons.text_fields, color: scheme.primary),
                     tooltip: '文字',
@@ -187,7 +196,7 @@ class _EditorScreenState extends State<EditorScreen> {
                       children: [
                         for (final b in BrushType.values)
                           IconButton(
-                            isSelected: _engine.brush == b && _engine.tool == ToolMode.draw,
+                            isSelected: _engine.brush == b && _engine.tool == Tool.draw,
                             selectedIcon: Icon(b.icon, color: scheme.primary),
                             icon: Icon(b.icon),
                             tooltip: b.label,
@@ -199,7 +208,6 @@ class _EditorScreenState extends State<EditorScreen> {
                 ],
               ),
             ),
-            // Size slider
             Row(
               children: [
                 const Icon(Icons.line_weight, size: 20),
@@ -304,9 +312,11 @@ class _EditorScreenState extends State<EditorScreen> {
       ),
     );
     if (result != null && result['text']?.isNotEmpty == true) {
-      _engine.setPendingText(result['text'] as String, size: result['size'] as double);
-      _engine.setTool(ToolMode.text);
-      _toast('点击画布放置文字');
+      _pendingText = result['text'] as String;
+      _pendingTextSize = result['size'] as double;
+      _pendingTextColor = _engine.color;
+      _engine.setTool(Tool.text);
+      if (mounted) _toast('点击画布放置文字');
     }
   }
 
@@ -398,12 +408,15 @@ class _EditorScreenState extends State<EditorScreen> {
     try {
       switch (v) {
         case 'png':
+          final path = await _storage.exportPng();
+          _toast('已保存到 Pcitrue 文件夹: $path');
+          break;
         case 'jpg':
-          final path = await _storage.exportToPublic(asJpg: v == 'jpg');
+          final path = await _storage.exportJpg();
           _toast('已保存到 Pcitrue 文件夹: $path');
           break;
         case 'bin':
-          final path = await _storage.exportBinToPublic();
+          final path = await _storage.exportBin();
           _toast('工程已导出到 Pcitrue 文件夹: $path');
           break;
         case 'import_layer':
@@ -421,7 +434,7 @@ class _EditorScreenState extends State<EditorScreen> {
               ],
             ),
           );
-          if (ok == true) _engine.clearProject();
+          if (ok == true) _engine.clearToBlank();
           break;
       }
     } catch (e) {
@@ -439,12 +452,12 @@ class _EditorScreenState extends State<EditorScreen> {
     final codec = await ui.instantiateImageCodec(bytes);
     final frame = await codec.getNextFrame();
     await _engine.addImageAsLayer(frame.image);
-    _toast('图片已作为新图层添加');
+    if (mounted) _toast('图片已作为新图层添加');
   }
 }
 
 // =============================================================================
-// Step Timeline / Playback
+// Step Timeline
 // =============================================================================
 class _StepTimeline extends StatefulWidget {
   const _StepTimeline({required this.engine});
@@ -471,7 +484,7 @@ class _StepTimelineState extends State<_StepTimeline> {
     for (int i = 0; i <= total; i++) {
       if (!mounted) return;
       setState(() => _progress = i.toDouble());
-      await Future.delayed(const Duration(milliseconds: 400));
+      await Future.delayed(const Duration(milliseconds: 300));
     }
     setState(() => _playing = false);
   }
@@ -504,11 +517,6 @@ class _StepTimelineState extends State<_StepTimeline> {
               ),
               Text('${_progress.round()}/$total'),
             ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '提示：拖动滑块查看绘画进度。完整重放需重新打开工程。',
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
           ),
         ],
       ),
