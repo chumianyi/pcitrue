@@ -24,6 +24,9 @@ jobs:
           channel: stable
           flutter-version: 3.47.4
 
+      - name: Flutter version
+        run: flutter --version
+
       - name: Accept Android licenses
         run: yes | flutter doctor --android-licenses || true
 
