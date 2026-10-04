@@ -36,8 +36,31 @@ jobs:
       - name: Analyze
         run: flutter analyze --no-fatal-infos
 
+      - name: Generate release keystore
+        working-directory: android
+        run: |
+          keytool -genkeypair -v \
+            -keystore pcitrue-release.jks \
+            -storepass pcitrue2024 -keypass pcitrue2024 \
+            -alias pcitrue -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Pcitrue, OU=Art, O=Pcitrue, L=City, S=State, C=CN"
+          cat > keystore.properties <<EOF
+          storeFile=pcitrue-release.jks
+          storePassword=pcitrue2024
+          keyAlias=pcitrue
+          keyPassword=pcitrue2024
+          EOF
+
       - name: Build release APK
         run: flutter build apk --release
+
+      - name: Verify APK (minSdk + signature)
+        run: |
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          echo "== badging =="
+          $ANDROID_HOME/build-tools/*/aapt dump badging $APK | grep -E "package:|sdkVersion|targetSdkVersion|application-label" || true
+          echo "== signature =="
+          $ANDROID_HOME/build-tools/*/apksigner verify --print-certs $APK | head -5 || true
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

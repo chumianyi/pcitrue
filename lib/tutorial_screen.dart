@@ -46,7 +46,7 @@ class TutorialScreen extends StatelessWidget {
           ]),
           _section(context, '导出与保存', Icons.save_alt, [
             '• 工程自动保存为 .bin 格式',
-            '• 导出 PNG/JPG 到 Download/Pcitrue 文件夹',
+            '• 导出 PNG/JPG 到 Pictures/Pcitrue 文件夹',
             '• 可导出 .bin 工程文件备份',
             '• 在手机文件管理器中可直接看到',
           ]),

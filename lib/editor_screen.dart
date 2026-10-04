@@ -67,7 +67,7 @@ class _EditorScreenState extends State<EditorScreen> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () async {
-            await _storage.autoSave();
+            await _storage.autosave();
             if (mounted) Navigator.pop(context);
           },
         ),
@@ -475,18 +475,31 @@ class _StepTimelineState extends State<_StepTimeline> {
   void initState() {
     super.initState();
     _progress = widget.engine.steps.length.toDouble();
+    // Start at the finished frame.
+    widget.engine.startReplay(_progress.round());
+  }
+
+  @override
+  void dispose() {
+    widget.engine.stopReplay();
+    super.dispose();
+  }
+
+  Future<void> _apply(double v) async {
+    await widget.engine.startReplay(v.round());
   }
 
   Future<void> _playback() async {
-    if (_playing) return;
+    if (_playing || widget.engine.steps.isEmpty) return;
     setState(() => _playing = true);
     final total = widget.engine.steps.length;
     for (int i = 0; i <= total; i++) {
-      if (!mounted) return;
+      if (!mounted || !_playing) return;
       setState(() => _progress = i.toDouble());
-      await Future.delayed(const Duration(milliseconds: 300));
+      await _apply(i.toDouble());
+      await Future.delayed(const Duration(milliseconds: 350));
     }
-    setState(() => _playing = false);
+    if (mounted) setState(() => _playing = false);
   }
 
   @override
@@ -499,7 +512,8 @@ class _StepTimelineState extends State<_StepTimeline> {
         children: [
           const Text('步骤回放', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          Text('共 $total 步', style: TextStyle(color: Colors.grey.shade600)),
+          Text('共 $total 步 · 拖动滑块回看绘画过程',
+              style: TextStyle(color: Colors.grey.shade600)),
           const SizedBox(height: 16),
           Row(
             children: [
@@ -512,7 +526,10 @@ class _StepTimelineState extends State<_StepTimeline> {
                   min: 0,
                   max: total.toDouble().clamp(1, 9999),
                   value: _progress.clamp(0, total.toDouble()),
-                  onChanged: (v) => setState(() => _progress = v),
+                  onChanged: (v) {
+                    setState(() => _progress = v);
+                    _apply(v);
+                  },
                 ),
               ),
               Text('${_progress.round()}/$total'),
