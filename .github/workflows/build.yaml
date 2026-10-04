@@ -24,8 +24,8 @@ jobs:
           channel: stable
           flutter-version: 3.47.4
 
-      - name: Prepare Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android licenses
+        run: yes | flutter doctor --android-licenses || true
 
       - name: Install dependencies
         run: flutter pub get
